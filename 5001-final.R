@@ -1,16 +1,22 @@
+# install.packages("caTools")
+# install.packages("glmnet")
+# install.packages("caret")
+# install.packages("gbm")
 library(caTools)
 library(glmnet)
+library(caret)
 library(gbm)
 library(readr)
-# import the data ====
+
+# Import the data 
 train0 <- read_csv("~/Desktop/all/train.csv")
 test0 <- read_csv("/Users/zhaochenchen/Desktop/all/test.csv")
-# remove the feature id
+# Remove the feature id
 train <- train0[, -1]
 test <- test0[, -1]
 train <- train[, -5]
 test <- test[, -5]
-# change penalty into dummary variables
+# Change penalty into dummy variables
 train$penalty <- as.factor(train$penalty)
 dummy.penalty <- model.matrix(~ penalty - 1, data = train)
 head(dummy.penalty)
@@ -32,10 +38,8 @@ library(xgboost)
 set.seed(1234)
 xgbFit <- xgboost(data = as.matrix(train1[1:380, -12]), nfold = 10, 
                   label = as.matrix(train.target[1:380]), nrounds = 3000, verbose = 0,
-                  objective = 'reg:gamma', val_metric = 'rmse')#, eta = 0.26,
-#gamma = 0.01, max_depth = 3, min_child_weight = 4, subsample = 0.5, 
-#colsample_bytree = 0.7)
-# predictions
+                  objective = 'reg:gamma', val_metric = 'rmse')
+# Predictions
 preds.xgb <- predict(xgbFit, newdata = as.matrix(subset(train1, select = -time)[381:400, ]))
 mean((train1[381:400, 12]- preds.xgb)^2)
 importance.xgb <- xgb.importance(feature_names = colnames(subset(train1, select = -time)), model = xgbFit)
@@ -49,7 +53,7 @@ xgbFit1 <- xgboost(data = as.matrix(train1[feature.xgb][1:380, ]), nfold = 10,
                    objective = 'reg:gamma', val_metric = 'rmse', eta = 0.09273402,
                    gamma = 0.3628627, max_depth = 6, min_child_weight = 1, subsample = 0.7818276, 
                    colsample_bytree = 0.6221984, max_delta_step = 9)
-# predictions
+# Predictions
 preds.xgb1 <- predict(xgbFit1, newdata = as.matrix(train1[feature.xgb][381:400, ]))
 mean((subset(train1, select = time)[381:400, ]-preds.xgb1)^2)
 dtrain <- xgb.DMatrix(as.matrix(train1[feature.xgb][1:380, ]), label = as.matrix(train.target[1:380]))
@@ -92,12 +96,13 @@ xgbFit2 <- xgboost(data = as.matrix(train1[feature.xgb]), nfold = 10,
                    objective = 'reg:gamma', val_metric = 'rmse', eta = 0.07784344,
                    gamma = 0.1236395, max_depth = 8, min_child_weight = 36, subsample = 0.7373081, 
                    colsample_bytree = 0.586284, max_delta_step = 7)
-#nround = best_rmse_index
-#set.seed(best_seednumber)
-#xgb.model1 <- xgb.train(data = dtrain, params = best_param, nrounds = nround, nthread = 6)
-#preds.xgb.model1 <- predict(xgb.model1, newdata = as.matrix(train1[feature.xgb][381:400, ]))
-#mean((subset(train1, select = time)[381:400, ]-preds.xgb.model1)^2)
-# lasso
+# nround = best_rmse_index
+# set.seed(best_seednumber)
+# xgb.model1 <- xgb.train(data = dtrain, params = best_param, nrounds = nround, nthread = 6)
+# preds.xgb.model1 <- predict(xgb.model1, newdata = as.matrix(train1[feature.xgb][381:400, ]))
+# mean((subset(train1, select = time)[381:400, ]-preds.xgb.model1)^2)
+
+# Lasso
 x <- model.matrix(time~.,train1)
 y <- train1$time
 lasso.mod <- glmnet(x[1:380, ], y[1:380], alpha = 1)
@@ -108,10 +113,13 @@ plot(cv.out)
 bestlam <- cv.out$lambda.min
 lasso.pred <-predict(lasso.mod, s = bestlam, newx = x[381:400,], alpha = 1)
 mean((lasso.pred-y[381:400])^2)
+
 # Weight
 w <- seq(from = 0, to = 1, 0.00001)
 best_rmse = Inf
 best_rmse_index = 0
+# After get the parameters from cv, it is required to change the value for both xgbFit1 and xgbFit2
+# Run xgbFit1 and preds.xgb1 again, we use preds.xgb1 to decide the weight as following
 for (i in 1:length(w)){
   pred <- w[i] * preds.xgb1 + (1 - w[i]) * lasso.pred
   rmse <- mean((subset(train1, select = time)[381:400, ] - pred) ^ 2)
@@ -123,7 +131,8 @@ for (i in 1:length(w)){
 w_best <- c(w[best_rmse_index], 1 - w[best_rmse_index])
 best_rmse
 w_best
-# test
+
+# Test
 dummies <- dummyVars(~ penalty, data = test0)
 pred.dummies <- as.data.frame(predict(dummies, newdata = test0))
 test1 <- cbind(test[, -1], pred.dummies)
@@ -136,11 +145,15 @@ test1 <- cbind(test1, new1, new2, new3)
 xt <- model.matrix(~.,test1)
 preds.xgb2 <- predict(xgbFit2, newdata = as.matrix(test1[feature.xgb]))
 lasso.pred1 <- predict(lasso.mod, s = bestlam, newx = xt, alpha = 1)
-result <- 0.9226*preds.xgb2 + 0.0774*lasso.pred1
+
+# Final Result
+# Based on 'w_best'
+result <- 0.9226*preds.xgb2 + 0.0774*lasso.pred1 
+# If the result less than zero, use value got from XGBoost
 for (i in 1:100){
   if (result[i] > 0){
     result[i] = result[i]}
   else{
     result[i] = preds.xgb2[i]}
 }
-write.table(result, file="/Users/zhaochenchen/Desktop/zcc.csv", row.names=T, col.names=T, sep=",")
+write.table(result, file = "/Users/zhaochenchen/Desktop/zcc.csv", row.names = T, col.names = T, sep = ",")
